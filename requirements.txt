@@ -1,0 +1,8 @@
+medmnist
+wilds
+kaggle
+tqdm
+pyrootutils
+opencv-python-headless
+matplotlib
+openslide-python
