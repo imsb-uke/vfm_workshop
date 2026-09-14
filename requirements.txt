@@ -6,3 +6,7 @@ pyrootutils
 opencv-python-headless
 matplotlib
 openslide-python
+torch
+timm
+huggingface_hub
+scikit-learn

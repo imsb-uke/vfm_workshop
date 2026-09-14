@@ -180,3 +180,4 @@ cython_debug/
 .vscode/settings.json
 notebooks/data_download/.old/camelyon.ipynb
 notebooks/data_download/.old/panda.ipynb
+**/.old/

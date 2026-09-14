@@ -13,7 +13,8 @@ ignore = [
     "D205",
     "D212",
     "D213",
-    "D107"
+    "D107",
+    "E402",
 ]
 
 [tool.pytest.ini_options]
