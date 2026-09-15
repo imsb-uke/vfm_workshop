@@ -10,3 +10,4 @@ torch
 timm
 huggingface_hub
 scikit-learn
+timm
