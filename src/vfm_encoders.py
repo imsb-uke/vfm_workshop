@@ -28,6 +28,10 @@ class Encoder:
     embed_dim: int
     # maps a raw model forward pass to a single (B, embed_dim) embedding tensor
     pool: Callable[[torch.Tensor], torch.Tensor]
+    # maps a batch tensor to its spatial patch tokens (B, num_patches, embed_dim),
+    # CLS/register tokens already dropped -- for patch-level analysis (see
+    # `embed_image_patches`) rather than the single pooled vector `pool` gives
+    patch_tokens: Callable[[torch.Tensor], torch.Tensor]
 
 
 def load_uni2(device: str = "cuda") -> Encoder:
@@ -52,8 +56,21 @@ def load_uni2(device: str = "cuda") -> Encoder:
     model = model.eval().to(device)
     transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
 
+    def patch_tokens(batch: torch.Tensor) -> torch.Tensor:
+        # num_classes=0 makes model(batch) return the pooled CLS embedding directly
+        # (see `pool` below), so patch tokens need the pre-pool sequence from
+        # forward_features instead. no_embed_class + reg_tokens=8 -> 9 prefix
+        # tokens (1 CLS + 8 register) to drop before the patch grid starts.
+        tokens = model.forward_features(batch)
+        return tokens[:, 9:]
+
     return Encoder(
-        name="uni2-h", model=model, transform=transform, embed_dim=1536, pool=lambda out: out
+        name="uni2-h",
+        model=model,
+        transform=transform,
+        embed_dim=1536,
+        pool=lambda out: out,
+        patch_tokens=patch_tokens,
     )
 
 
@@ -75,7 +92,20 @@ def load_virchow2(device: str = "cuda") -> Encoder:
         patch_tokens = out[:, 5:]
         return torch.cat([class_token, patch_tokens.mean(dim=1)], dim=-1)
 
-    return Encoder(name="virchow2", model=model, transform=transform, embed_dim=2560, pool=pool)
+    def patch_tokens(batch: torch.Tensor) -> torch.Tensor:
+        # unlike UNI2-h, model(batch) here already returns the full (B, N, D)
+        # sequence -- registers are tokens 1:4, patch tokens start at index 5.
+        tokens = model(batch)
+        return tokens[:, 5:]
+
+    return Encoder(
+        name="virchow2",
+        model=model,
+        transform=transform,
+        embed_dim=2560,
+        pool=pool,
+        patch_tokens=patch_tokens,
+    )
 
 
 @torch.inference_mode()
@@ -99,3 +129,21 @@ def embed_images(
         out[start : start + len(chunk)] = embedding.float().cpu().numpy()
 
     return out
+
+
+@torch.inference_mode()
+def embed_image_patches(encoder: Encoder, image, device: str = "cuda") -> np.ndarray:
+    """Runs a single image through `encoder` and returns its spatial patch tokens
+    as a (grid_h, grid_w, embed_dim) array (CLS/register tokens dropped).
+
+    Unlike `embed_images`, which pools each image down to one vector, this keeps
+    every patch token so patch-to-patch relationships -- e.g. cosine similarity
+    to one query patch, a la DINOv3 fig. 3 -- can be inspected.
+    """
+    batch = encoder.transform(image).unsqueeze(0).to(device)
+    tokens = encoder.patch_tokens(batch)[0].float().cpu().numpy()  # (num_patches, embed_dim)
+
+    patch_size = encoder.model.patch_embed.patch_size[0]
+    grid_h = batch.shape[-2] // patch_size
+    grid_w = batch.shape[-1] // patch_size
+    return tokens.reshape(grid_h, grid_w, -1)
